@@ -1,0 +1,104 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{TITLE}}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0d12;--panel:#12151c;--panel2:#181c25;--line:#232834;--fg:#e4e7ee;--mute:#8a93a6;--dim:#5d6577;--acc:#ff7a2f;--acc-soft:rgba(255,122,47,.12);--ok:#3ecf8e;--bad:#ff5c6c;--r:10px}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--fg);background:var(--bg)}
+main{max-width:1240px;margin:0 auto;padding:22px 20px 60px}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-.3px}
+.mute{color:var(--mute)}
+.ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0}
+.ctl button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer}
+.ctl button:hover{border-color:var(--acc)} .ctl button.pri{background:var(--acc);border-color:var(--acc);color:#1a0d05;font-weight:600}
+.dots{display:flex;gap:6px;flex-wrap:wrap}.dots span{font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid var(--line);color:var(--mute);cursor:pointer}
+.dots span.on{border-color:var(--acc);color:#ffb08a;background:var(--acc-soft)}
+#stage{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:block}
+#stage text{font-family:Inter,system-ui,sans-serif;fill:#d7dae0}
+#stage .mono{font-family:"JetBrains Mono",monospace}
+.prog{height:3px;background:var(--line);border-radius:2px;margin-top:6px}.prog i{display:block;height:100%;width:0;background:var(--acc);border-radius:2px;transition:width .4s}
+#cap{margin-top:14px}#cap h3{color:var(--acc);font-size:17px;margin:0 0 10px}
+.cap-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:14px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px}
+.eli5{background:linear-gradient(135deg,rgba(62,207,142,.10),rgba(90,169,255,.06));border-color:#3ecf8e55}
+.eli5 p{font-size:15px;line-height:1.65;color:#e9fbf2;margin:0}
+.crit{border-color:#ff7a2f66;margin-top:14px}.crit li{margin:4px 0}
+.tag{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:0 0 8px}
+.tech p{margin:0 0 12px;color:#cfd3dc}.tech code{display:block;font-family:"JetBrains Mono",monospace;font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;color:#ffb08a;white-space:pre-wrap}
+.words dt{font-weight:600;color:#ffb08a;margin-top:8px}.words dd{margin:2px 0 0;color:#cfd3dc}
+#tip{position:fixed;pointer-events:none;background:#000d;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:none;z-index:10;max-width:280px}
+@media(max-width:800px){.cap-grid{grid-template-columns:1fr}main{padding:16px}}
+</style></head><body><main>
+<h1>{{HEADING}}</h1>
+<div class="mute">{{SUBTITLE}} Use ← → or the buttons. Hover elements for details.</div>
+<div class="ctl"><button id="prev">← Prev</button><button id="play" class="pri">▶ Play all</button><button id="next">Next →</button><button id="re">↻ Replay step</button><div class="dots" id="dots"></div></div>
+<svg id="stage" viewBox="0 0 1000 560"></svg><div class="prog"><i id="bar"></i></div><div id="cap"></div>
+</main><div id="tip"></div>
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+let M, PL = {stage: 0, token: 0, timer: null, playing: false};
+const svg = document.getElementById('stage'), tip = document.getElementById('tip');
+
+// ---------- helpers ----------
+function S(tag, a, p) { const e = document.createElementNS(NS, tag); for (const k in a || {}) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; }
+function T(p, x, y, s, a) { const t = S('text', {x, y, ...(a || {})}, p); t.textContent = s; return t; }
+function later(ms, fn) { const tok = PL.token; setTimeout(() => { if (tok === PL.token) fn(); }, ms); }
+// tween: progress clamped at 0 because the first rAF timestamp can precede t0
+function tween(ms, f, delay = 0) { const tok = PL.token; later(delay, () => { const t0 = performance.now(); const step = now => { if (tok !== PL.token) return; const k = Math.min(1, Math.max(0, (now - t0) / ms)), e = k < .5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2; f(e); if (k < 1) requestAnimationFrame(step); }; requestAnimationFrame(step); }); }
+function fade(n, delay = 0, dur = .6) { n.style.opacity = 0; n.style.transition = `opacity ${dur}s ease ${delay}s`; requestAnimationFrame(() => requestAnimationFrame(() => n.style.opacity = 1)); return n; }
+function draw(p, delay = 0, dur = 1) { const len = p.getTotalLength ? p.getTotalLength() : 500; p.style.strokeDasharray = len; p.style.strokeDashoffset = len; p.style.transition = `stroke-dashoffset ${dur}s ease ${delay}s`; requestAnimationFrame(() => requestAnimationFrame(() => p.style.strokeDashoffset = 0)); return p; }
+function tipOn(el, html) { el.style.cursor = 'pointer'; el.addEventListener('mousemove', e => { tip.innerHTML = html(); tip.style.display = 'block'; tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px'; }); el.addEventListener('mouseleave', () => tip.style.display = 'none'); }
+const fmt = (x, d = 0) => x.toLocaleString('en-GB', {maximumFractionDigits: d, minimumFractionDigits: d});
+function legend(g, x, y, items) { items.forEach(([c, s], i) => { S('rect', {x, y: y + i * 18 - 9, width: 10, height: 10, rx: 2, fill: c}, g); T(g, x + 16, y + i * 18, s, {'font-size': 11, fill: '#aab'}); }); }
+function axisTitle(g, x, y, s) { T(g, x, y, s, {'font-size': 13, 'font-weight': 600, fill: '#fff'}); }
+
+// ---------- stages: one draw(g) per step, all drawing inside viewBox 0 0 1000 560 ----------
+// Replace this example. Every number on screen must come from M (data.json), never be typed in.
+function s1(g) {
+  axisTitle(g, 30, 34, 'Example step: one bar per item');
+  const mx = Math.max(...M.items.map(d => d.value));
+  M.items.forEach((d, i) => {
+    const h = 380 * d.value / mx, r = S('rect', {x: 40 + i * 60, y: 480, width: 44, height: 0, rx: 4, fill: '#5aa9ff'}, g);
+    tipOn(r, () => `<b>${d.name}</b><br>${fmt(d.value, 1)}`);
+    tween(800, e => { r.setAttribute('y', 480 - h * e); r.setAttribute('height', h * e); }, 200 + i * 80);
+    fade(T(g, 40 + i * 60, 500, d.name, {'font-size': 11, fill: '#8a93a6'}), .4 + i * .08);
+  });
+}
+
+const STAGES = [
+  {name: '1 · Example', title: 'What this step shows', draw: s1,
+   text: 'Plain-language explanation: what happens and why it matters, no jargon.',
+   tech: 'What the code does, precisely: inputs, formula, library call, edge cases.',
+   code: 'the_actual_line_of_code(x)  # copied from the source',
+   words: [['Term', 'One-line definition.']],
+   critique: ['The assumption here a reviewer should push on, phrased as a question.']},
+];
+
+// ---------- player ----------
+function go(i) {
+  PL.stage = i; PL.token++; svg.innerHTML = ''; tip.style.display = 'none';
+  const st = STAGES[i], g = S('g', {}, svg); st.draw(g);
+  document.querySelectorAll('#dots span').forEach((s, j) => s.classList.toggle('on', j === i));
+  document.getElementById('bar').style.width = (100 * (i + 1) / STAGES.length) + '%';
+  document.getElementById('cap').innerHTML = `<h3>${st.title}</h3><div class="cap-grid"><div class="box eli5"><div class="tag">💡 In plain words</div><p>${st.text}</p></div>
+    <div class="box tech"><div class="tag">⚙️ What the code does</div><p>${st.tech}</p><code>${st.code}</code></div></div>
+    <div class="cap-grid" style="margin-top:14px"><div class="box crit"><div class="tag">🎯 Open to critique</div><ul>${st.critique.map(c => `<li>${c}</li>`).join('')}</ul></div>
+    <div class="box words"><div class="tag">📖 Terms</div><dl>${st.words.map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('')}</dl></div></div>`;
+  history.replaceState(null, '', '#' + (i + 1));
+}
+function pause() { PL.playing = false; clearInterval(PL.timer); document.getElementById('play').textContent = '▶ Play all'; }
+function play() { PL.playing = true; document.getElementById('play').textContent = '❚❚ Pause'; if (PL.stage === STAGES.length - 1) go(0); clearInterval(PL.timer); PL.timer = setInterval(() => PL.stage < STAGES.length - 1 ? go(PL.stage + 1) : pause(), 11000); }
+document.getElementById('prev').onclick = () => { pause(); go(Math.max(0, PL.stage - 1)); };
+document.getElementById('next').onclick = () => { pause(); go(Math.min(STAGES.length - 1, PL.stage + 1)); };
+document.getElementById('re').onclick = () => go(PL.stage);
+document.getElementById('play').onclick = () => PL.playing ? pause() : play();
+document.addEventListener('keydown', e => { if (e.key === 'ArrowRight') document.getElementById('next').click(); if (e.key === 'ArrowLeft') document.getElementById('prev').click(); });
+
+fetch('data.json').then(r => r.json()).then(d => {
+  M = d;
+  document.getElementById('dots').innerHTML = STAGES.map(s => `<span>${s.name}</span>`).join('');
+  document.querySelectorAll('#dots span').forEach((s, i) => s.onclick = () => { pause(); go(i); });
+  const m = location.hash.match(/^#(\d+)/); go(m ? Math.min(STAGES.length, +m[1]) - 1 : 0);
+});
+</script></body></html>

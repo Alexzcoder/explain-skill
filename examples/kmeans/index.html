@@ -1,0 +1,221 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>k-means, step by step</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0d12;--panel:#12151c;--panel2:#181c25;--line:#232834;--fg:#e4e7ee;--mute:#8a93a6;--dim:#5d6577;--acc:#ff7a2f;--acc-soft:rgba(255,122,47,.12);--ok:#3ecf8e;--bad:#ff5c6c;--r:10px}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--fg);background:var(--bg)}
+main{max-width:1240px;margin:0 auto;padding:22px 20px 60px}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-.3px}
+.mute{color:var(--mute)}
+.ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0}
+.ctl button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer}
+.ctl button:hover{border-color:var(--acc)} .ctl button.pri{background:var(--acc);border-color:var(--acc);color:#1a0d05;font-weight:600}
+.dots{display:flex;gap:6px;flex-wrap:wrap}.dots span{font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid var(--line);color:var(--mute);cursor:pointer}
+.dots span.on{border-color:var(--acc);color:#ffb08a;background:var(--acc-soft)}
+#stage{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:block}
+#stage text{font-family:Inter,system-ui,sans-serif;fill:#d7dae0}
+#stage .mono{font-family:"JetBrains Mono",monospace}
+.prog{height:3px;background:var(--line);border-radius:2px;margin-top:6px}.prog i{display:block;height:100%;width:0;background:var(--acc);border-radius:2px;transition:width .4s}
+#cap{margin-top:14px}#cap h3{color:var(--acc);font-size:17px;margin:0 0 10px}
+.cap-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:14px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px}
+.eli5{background:linear-gradient(135deg,rgba(62,207,142,.10),rgba(90,169,255,.06));border-color:#3ecf8e55}
+.eli5 p{font-size:15px;line-height:1.65;color:#e9fbf2;margin:0}
+.crit{border-color:#ff7a2f66;margin-top:14px}.crit li{margin:4px 0}
+.tag{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:0 0 8px}
+.tech p{margin:0 0 12px;color:#cfd3dc}.tech code{display:block;font-family:"JetBrains Mono",monospace;font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;color:#ffb08a;white-space:pre-wrap}
+.words dt{font-weight:600;color:#ffb08a;margin-top:8px}.words dd{margin:2px 0 0;color:#cfd3dc}
+#tip{position:fixed;pointer-events:none;background:#000d;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:none;z-index:10;max-width:280px}
+@media(max-width:800px){.cap-grid{grid-template-columns:1fr}main{padding:16px}}
+</style></head><body><main>
+<h1>How k-means finds groups</h1>
+<div class="mute">150 points, k = 3, the real code and its real output. Use ← → or the buttons. Hover elements for details.</div>
+<div class="ctl"><button id="prev">← Prev</button><button id="play" class="pri">▶ Play all</button><button id="next">Next →</button><button id="re">↻ Replay step</button><div class="dots" id="dots"></div></div>
+<svg id="stage" viewBox="0 0 1000 560"></svg><div class="prog"><i id="bar"></i></div><div id="cap"></div>
+</main><div id="tip"></div>
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+let M, PL = {stage: 0, token: 0, timer: null, playing: false};
+const svg = document.getElementById('stage'), tip = document.getElementById('tip');
+
+// ---------- helpers ----------
+function S(tag, a, p) { const e = document.createElementNS(NS, tag); for (const k in a || {}) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; }
+function T(p, x, y, s, a) { const t = S('text', {x, y, ...(a || {})}, p); t.textContent = s; return t; }
+function later(ms, fn) { const tok = PL.token; setTimeout(() => { if (tok === PL.token) fn(); }, ms); }
+// tween: progress clamped at 0 because the first rAF timestamp can precede t0
+function tween(ms, f, delay = 0) { const tok = PL.token; later(delay, () => { const t0 = performance.now(); const step = now => { if (tok !== PL.token) return; const k = Math.min(1, Math.max(0, (now - t0) / ms)), e = k < .5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2; f(e); if (k < 1) requestAnimationFrame(step); }; requestAnimationFrame(step); }); }
+function fade(n, delay = 0, dur = .6) { n.style.opacity = 0; n.style.transition = `opacity ${dur}s ease ${delay}s`; requestAnimationFrame(() => requestAnimationFrame(() => n.style.opacity = 1)); return n; }
+function draw(p, delay = 0, dur = 1) { const len = p.getTotalLength ? p.getTotalLength() : 500; p.style.strokeDasharray = len; p.style.strokeDashoffset = len; p.style.transition = `stroke-dashoffset ${dur}s ease ${delay}s`; requestAnimationFrame(() => requestAnimationFrame(() => p.style.strokeDashoffset = 0)); return p; }
+function tipOn(el, html) { el.style.cursor = 'pointer'; el.addEventListener('mousemove', e => { tip.innerHTML = html(); tip.style.display = 'block'; tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px'; }); el.addEventListener('mouseleave', () => tip.style.display = 'none'); }
+const fmt = (x, d = 0) => x.toLocaleString('en-GB', {maximumFractionDigits: d, minimumFractionDigits: d});
+function legend(g, x, y, items) { items.forEach(([c, s], i) => { S('rect', {x, y: y + i * 18 - 9, width: 10, height: 10, rx: 2, fill: c}, g); T(g, x + 16, y + i * 18, s, {'font-size': 11, fill: '#aab'}); }); }
+function axisTitle(g, x, y, s) { T(g, x, y, s, {'font-size': 13, 'font-weight': 600, fill: '#fff'}); }
+
+// ---------- stages: k-means, drawn from data.json (written by export.py from kmeans.py) ----------
+const COL = ['#ff7a2f', '#5aa9ff', '#3ecf8e'];
+const X = x => 50 + (x + 1) * 44, Y = y => 520 - (y + 1) * 44;   // data −1…10 → plot 50…534
+
+function frame(g, title) {
+  axisTitle(g, 50, 34, title);
+  S('rect', {x: 40, y: 50, width: 500, height: 480, rx: 8, fill: 'none', stroke: '#232834'}, g);
+}
+function dots(g, labels, delay = true) {
+  return M.points.map((p, i) => {
+    const c = S('circle', {cx: X(p[0]), cy: Y(p[1]), r: 4.5, fill: labels ? COL[labels[i]] : '#8a93a6', opacity: .85}, g);
+    tipOn(c, () => `point ${i}<br>(${fmt(p[0], 2)}, ${fmt(p[1], 2)})` + (labels ? `<br>cluster ${labels[i] + 1}` : ''));
+    if (delay) fade(c, i * .006, .4);
+    return c;
+  });
+}
+function centre(g, c, k) {
+  const grp = S('g', {transform: `translate(${X(c[0])},${Y(c[1])})`}, g);
+  S('circle', {r: 13, fill: '#0b0d12', stroke: COL[k], 'stroke-width': 3}, grp);
+  S('path', {d: 'M-5 0H5M0 -5V5', stroke: COL[k], 'stroke-width': 2.5}, grp);
+  return grp;
+}
+function side(g, lines) {
+  lines.forEach(([s, a], i) => fade(T(g, 600, 120 + i * 34, s, {'font-size': 17, ...(a || {})}), .3 + i * .25));
+}
+
+function s1(g) {
+  frame(g, `${M.points.length} points, no labels`);
+  dots(g);
+  side(g, [['The input is just coordinates.'], ['Goal: split them into', {fill: '#8a93a6'}],
+           [`k = ${M.k} groups whose points sit`, {fill: '#8a93a6'}], ['close to their group centre.', {fill: '#8a93a6'}]]);
+}
+function s2(g) {
+  frame(g, `Start: pick ${M.k} points at random as centres`);
+  dots(g, null, false);
+  M.rounds[0].centres.forEach((c, k) => { const n = centre(g, c, k); fade(n, .4 + k * .5); });
+  side(g, [['random.sample(points, K)', {class: 'mono', fill: '#ffb08a'}], ['The start is a guess.', {}],
+           ['A different seed can end', {fill: '#8a93a6'}], ['in a different answer.', {fill: '#8a93a6'}]]);
+}
+function s3(g) {
+  frame(g, 'Assign: every point joins its nearest centre');
+  const R = M.rounds[0], cs = dots(g, null, false);
+  R.centres.forEach((c, k) => centre(g, c, k));
+  M.points.forEach((p, i) => later(300 + i * 12, () => {
+    const c = R.centres[R.labels[i]];
+    const l = S('line', {x1: X(p[0]), y1: Y(p[1]), x2: X(c[0]), y2: Y(c[1]), stroke: COL[R.labels[i]], 'stroke-opacity': .25}, g);
+    g.insertBefore(l, g.children[1]);
+    cs[i].setAttribute('fill', COL[R.labels[i]]);
+  }));
+  const n = k => R.labels.filter(l => l === k).length;
+  side(g, [['nearest = min distance', {class: 'mono', fill: '#ffb08a'}],
+           ...R.centres.map((_, k) => [`cluster ${k + 1}: ${n(k)} points`, {fill: COL[k]}])]);
+}
+function moveCentres(g, from, to, delay) {
+  from.forEach((c, k) => {
+    const n = centre(g, c, k), a = to[k];
+    S('line', {x1: X(c[0]), y1: Y(c[1]), x2: X(a[0]), y2: Y(a[1]), stroke: COL[k], 'stroke-dasharray': '4 4', opacity: .6}, g);
+    g.appendChild(n);
+    tween(1200, e => n.setAttribute('transform', `translate(${X(c[0] + (a[0] - c[0]) * e)},${Y(c[1] + (a[1] - c[1]) * e)})`), delay);
+  });
+}
+function s4(g) {
+  frame(g, 'Update: move each centre to the mean of its points');
+  dots(g, M.rounds[0].labels, false);
+  moveCentres(g, M.rounds[0].centres, M.rounds[1].centres, 500);
+  side(g, [['centre = mean of its points', {class: 'mono', fill: '#ffb08a'}],
+           [`Largest move: ${fmt(M.rounds[0].moved, 2)} units`], ['Some points are now closer', {fill: '#8a93a6'}],
+           ['to a different centre…', {fill: '#8a93a6'}]]);
+}
+function s5(g) {
+  frame(g, 'Repeat until no centre moves');
+  const cs = dots(g, M.rounds[0].labels, false);
+  const mx = Math.max(...M.rounds.map(r => r.moved));
+  T(g, 600, 90, 'How far the centres moved, per round', {'font-size': 14, fill: '#aab'});
+  let layer = S('g', {}, g);
+  M.rounds.forEach((R, i) => later(i * 1700, () => {
+    R.labels.forEach((l, j) => cs[j].setAttribute('fill', COL[l]));
+    layer.remove(); layer = S('g', {}, g);
+    const next = M.rounds[i + 1] ? M.rounds[i + 1].centres : M.final;
+    moveCentres(layer, R.centres, next, 200);
+    const h = 300 * R.moved / mx, y0 = 470;
+    const b = S('rect', {x: 620 + i * 85, y: y0, width: 55, height: 0, rx: 4, fill: R.moved > 0 ? '#ff7a2f' : '#3ecf8e'}, g);
+    tween(700, e => { b.setAttribute('y', y0 - h * e); b.setAttribute('height', h * e); });
+    T(g, 647 + i * 85, y0 + 22, `round ${i + 1}`, {'font-size': 12, 'text-anchor': 'middle', fill: '#8a93a6'});
+    fade(T(g, 647 + i * 85, y0 - h - 8, fmt(R.moved, 2), {'font-size': 13, 'text-anchor': 'middle'}), .5);
+  }));
+  later(M.rounds.length * 1700, () => fade(T(g, 600, 530, `Stopped after ${M.rounds.length} rounds: nothing moved.`, {'font-size': 15, fill: '#3ecf8e'})));
+}
+function s6(g) {
+  frame(g, 'Result: three clusters, and how good they are');
+  dots(g, M.rounds[M.rounds.length - 1].labels, false);
+  M.final.forEach((c, k) => fade(centre(g, c, k), .2));
+  M.true.forEach((c, i) => {
+    const x = S('path', {d: `M${X(c[0]) - 7} ${Y(c[1]) - 7}l14 14m0 -14l-14 14`, stroke: '#fff', 'stroke-width': 2}, g);
+    fade(x, 1 + i * .3); tipOn(x, () => `true centre used to generate the data<br>(${c[0]}, ${c[1]})`);
+  });
+  side(g, [[`inertia = ${fmt(M.inertia, 1)}`, {class: 'mono', fill: '#ffb08a'}], ['(sum of squared distances', {fill: '#8a93a6'}],
+           ['to the assigned centre)', {fill: '#8a93a6'}], ['◯ found centre   ✕ true centre', {}]]);
+}
+
+const STAGES = [
+  {name: '1 · Data', title: 'What goes in?', draw: s1,
+   text: 'A cloud of dots. Nobody has told the algorithm which dot belongs where; it only sees positions.',
+   tech: '150 points drawn from three Gaussian blobs (σ = 1) with random.seed(7). The labels the blobs came from are thrown away.',
+   code: 'points = [(random.gauss(cx, 1.0), random.gauss(cy, 1.0)) for cx, cy in TRUE_CENTRES for _ in range(50)]',
+   words: [['k', 'How many groups you ask for. You choose it, the algorithm does not.']],
+   critique: ['k = 3 is given, not found. On real data, how would you pick k?']},
+  {name: '2 · Start', title: 'Where do the centres start?', draw: s2,
+   text: 'It makes a guess: three of the dots, picked at random, become the first group centres.',
+   tech: 'Forgy initialisation: K points sampled without replacement. No k-means++ spreading.',
+   code: 'centres = random.sample(points, K)',
+   words: [['Centre (centroid)', 'The average position of a group.'], ['Initialisation', 'The starting guess.']],
+   critique: ['Two starting centres in the same blob can trap the result in a bad split. Is one run enough?']},
+  {name: '3 · Assign', title: 'Which group does each point join?', draw: s3,
+   text: 'Every dot looks at the three centres and joins the closest one. That colours the whole cloud.',
+   tech: 'Straight-line (Euclidean) distance via math.dist; ties go to the lowest index because min() keeps the first.',
+   code: 'labels = [nearest(p, centres) for p in points]',
+   words: [['Euclidean distance', 'Ruler distance between two points.']],
+   critique: ['Distance in raw units: if x were metres and y kilometres, which axis would dominate?']},
+  {name: '4 · Update', title: 'Where should each centre move?', draw: s4,
+   text: 'Each centre moves to the middle of the dots that just joined it.',
+   tech: 'Arithmetic mean per cluster. An empty cluster would divide by zero; this code does not guard against it.',
+   code: 'new = [mean([p for p, l in zip(points, labels) if l == k]) for k in range(K)]',
+   words: [['Mean', 'Sum of positions divided by how many there are.']],
+   critique: ['What happens if a centre ends up with no points at all?']},
+  {name: '5 · Repeat', title: 'When does it stop?', draw: s5,
+   text: 'Assign, move, assign, move… Each round the centres move less, until they stop moving.',
+   tech: 'Loop until the largest centre shift is below 1e-6. Each round cannot increase inertia, so it always ends, but only at a local minimum.',
+   code: 'if moved < 1e-6:\n    break',
+   words: [['Converged', 'Nothing changes any more.'], ['Local minimum', 'Best nearby answer, not necessarily the best overall.']],
+   critique: ['There is no cap on rounds. Is that safe for a bigger dataset with floating-point jitter?']},
+  {name: '6 · Result', title: 'Did it find the real groups?', draw: s6,
+   text: 'The found centres (rings) land close to the true centres the data was made from (crosses).',
+   tech: 'Inertia, the sum of squared distances to the assigned centre, is the quantity k-means minimises. It only compares runs with the same k.',
+   code: 'inertia = sum(math.dist(p, centres[l]) ** 2 for p, l in zip(points, labels))',
+   words: [['Inertia', 'How spread out the groups are. Lower is tighter.']],
+   critique: ['Real data has no crosses to compare against. What would tell you the clusters mean anything?']},
+];
+
+// ---------- player ----------
+function go(i) {
+  PL.stage = i; PL.token++; svg.innerHTML = ''; tip.style.display = 'none';
+  const st = STAGES[i], g = S('g', {}, svg); st.draw(g);
+  document.querySelectorAll('#dots span').forEach((s, j) => s.classList.toggle('on', j === i));
+  document.getElementById('bar').style.width = (100 * (i + 1) / STAGES.length) + '%';
+  document.getElementById('cap').innerHTML = `<h3>${st.title}</h3><div class="cap-grid"><div class="box eli5"><div class="tag">💡 In plain words</div><p>${st.text}</p></div>
+    <div class="box tech"><div class="tag">⚙️ What the code does</div><p>${st.tech}</p><code>${st.code}</code></div></div>
+    <div class="cap-grid" style="margin-top:14px"><div class="box crit"><div class="tag">🎯 Open to critique</div><ul>${st.critique.map(c => `<li>${c}</li>`).join('')}</ul></div>
+    <div class="box words"><div class="tag">📖 Terms</div><dl>${st.words.map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('')}</dl></div></div>`;
+  history.replaceState(null, '', '#' + (i + 1));
+}
+function pause() { PL.playing = false; clearInterval(PL.timer); document.getElementById('play').textContent = '▶ Play all'; }
+function play() { PL.playing = true; document.getElementById('play').textContent = '❚❚ Pause'; if (PL.stage === STAGES.length - 1) go(0); clearInterval(PL.timer); PL.timer = setInterval(() => PL.stage < STAGES.length - 1 ? go(PL.stage + 1) : pause(), 11000); }
+document.getElementById('prev').onclick = () => { pause(); go(Math.max(0, PL.stage - 1)); };
+document.getElementById('next').onclick = () => { pause(); go(Math.min(STAGES.length - 1, PL.stage + 1)); };
+document.getElementById('re').onclick = () => go(PL.stage);
+document.getElementById('play').onclick = () => PL.playing ? pause() : play();
+document.addEventListener('keydown', e => { if (e.key === 'ArrowRight') document.getElementById('next').click(); if (e.key === 'ArrowLeft') document.getElementById('prev').click(); });
+
+fetch('data.json').then(r => r.json()).then(d => {
+  M = d;
+  document.getElementById('dots').innerHTML = STAGES.map(s => `<span>${s.name}</span>`).join('');
+  document.querySelectorAll('#dots span').forEach((s, i) => s.onclick = () => { pause(); go(i); });
+  const m = location.hash.match(/^#(\d+)/); go(m ? Math.min(STAGES.length, +m[1]) - 1 : 0);
+});
+</script></body></html>

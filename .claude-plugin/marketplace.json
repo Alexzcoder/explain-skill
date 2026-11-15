@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "explain-skill",
+  "description": "Animated explainers of your own code, on its own data, from one skill.",
+  "owner": {
+    "name": "Alexzcoder",
+    "url": "https://github.com/Alexzcoder"
+  },
+  "plugins": [
+    {
+      "name": "explain",
+      "description": "Walk through a pipeline or model stage by stage, animated, with a critique box on every step.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

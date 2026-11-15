@@ -1,0 +1,9 @@
+{
+  "name": "explain",
+  "version": "1.0.0",
+  "description": "Turn a pipeline, model or algorithm into an animated, step-by-step explainer page that runs on its real data.",
+  "author": {
+    "name": "Alexzcoder",
+    "url": "https://github.com/Alexzcoder"
+  }
+}
